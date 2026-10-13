@@ -14,9 +14,7 @@ The flow is the same whichever tool you use:
 4. Upgrade the collectors that carry the label to a specific version.
 5. Verify the upgrade.
 
-Steps 1 to 5 use the `bindplane` CLI and the REST API from a shell. The Ansible section runs the same flow as one playbook. Commands were checked against Bindplane CLI v1.94.0 and Bindplane Cloud.
-
-If the collectors that you want to upgrade already have a label you want to use, skip to step 4.
+Steps 1 to 5 use the `bindplane` CLI and the REST API from a shell. The Ansible sections provide two playbooks: one runs the whole flow, the other only upgrades collectors that are already labeled. Commands were checked against Bindplane CLI v1.94.0 and Bindplane Cloud.
 
 ## Prerequisites
 
@@ -381,6 +379,126 @@ ansible-playbook bindplane_label_upgrade.yml \
 ### Test status
 
 The `label` and `plan` stages were run against Bindplane Cloud with ansible-core 2.21 and passed, including the empty API key check. The two `upgrade` tasks (the `PATCH /v1/collectors/version` call and the wait loop) follow the server's API spec but have not been run, because no connected collector was available to upgrade in the test project. Run the `upgrade` stage against a small label group first.
+
+## Ansible playbook: upgrade collectors that are already labeled
+
+Use this playbook when the collectors already carry the label and only the upgrade is needed. It takes a label selector and a version, and it never changes labels.
+
+Save it as `bindplane_upgrade_by_label.yml`:
+
+```yaml
+---
+# Upgrade Bindplane collectors that already carry a label.
+# Usage:
+#   export BINDPLANE_API_KEY=...
+#   ansible-playbook bindplane_upgrade_by_label.yml -e label_selector=env=test -e target_version=v1.94.2
+- name: Upgrade Bindplane collectors by label
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    bindplane_url: "https://app.bindplane.com"
+    bindplane_api_key: "{{ lookup('ansible.builtin.env', 'BINDPLANE_API_KEY') }}"
+
+    # Label selector for the collectors to upgrade. Several labels can be
+    # combined with commas, for example "env=test,region=us-east".
+    label_selector: "env=test"
+
+    # Version to upgrade the selected collectors to.
+    target_version: v1.94.2
+
+    page_limit: 1000
+    upgrade_retries: 30
+    upgrade_delay: 20
+
+    api_headers:
+      X-Bindplane-Api-Key: "{{ bindplane_api_key }}"
+    collectors_url: "{{ bindplane_url }}/v1/collectors?limit={{ page_limit }}&selector={{ label_selector | urlencode }}"
+
+  tasks:
+    - name: Require an API key
+      ansible.builtin.assert:
+        that: bindplane_api_key | length > 0
+        fail_msg: "Set BINDPLANE_API_KEY (an empty key returns a 401 with no body)."
+      tags: [always]
+
+    - name: List collectors that carry the label
+      ansible.builtin.uri:
+        url: "{{ collectors_url }}"
+        headers: "{{ api_headers }}"
+        return_content: true
+      register: labeled
+      tags: [plan, upgrade]
+
+    - name: Stop if no collector carries the label
+      ansible.builtin.assert:
+        that: labeled.json.agents | default([], true) | length > 0
+        fail_msg: "No collectors match the selector {{ label_selector }}."
+      tags: [plan, upgrade]
+
+    - name: Pick collectors that are connected and not on the target version
+      ansible.builtin.set_fact:
+        upgrade_ids: >-
+          {{ labeled.json.agents
+             | selectattr('status', 'equalto', 1)
+             | rejectattr('version', 'equalto', target_version)
+             | map(attribute='id') | list }}
+      tags: [plan, upgrade]
+
+    - name: Show the upgrade plan
+      ansible.builtin.debug:
+        msg: >-
+          {{ labeled.json.agents | length }} collectors match {{ label_selector }},
+          {{ upgrade_ids | length }} to upgrade to {{ target_version }}
+          (disconnected collectors and collectors already on the target are skipped).
+      tags: [plan, upgrade]
+
+    - name: Start the upgrade
+      ansible.builtin.uri:
+        url: "{{ bindplane_url }}/v1/collectors/version"
+        method: PATCH
+        headers: "{{ api_headers }}"
+        body_format: json
+        body:
+          ids: "{{ upgrade_ids }}"
+          version: "{{ target_version }}"
+        status_code: 204
+      when: upgrade_ids | length > 0
+      changed_when: true
+      tags: [upgrade]
+
+    - name: Wait until the upgraded collectors report the target version
+      ansible.builtin.uri:
+        url: "{{ collectors_url }}"
+        headers: "{{ api_headers }}"
+        return_content: true
+      register: after
+      when: upgrade_ids | length > 0
+      until: >-
+        after.json.agents
+        | selectattr('id', 'in', upgrade_ids)
+        | rejectattr('version', 'equalto', target_version)
+        | list | length == 0
+      retries: "{{ upgrade_retries }}"
+      delay: "{{ upgrade_delay }}"
+      tags: [upgrade]
+```
+
+### Running it
+
+| Command | What it does |
+| --- | --- |
+| `ansible-playbook bindplane_upgrade_by_label.yml --tags plan -e label_selector=env=test` | Prints how many collectors match the label and how many would be upgraded. Changes nothing. |
+| `ansible-playbook bindplane_upgrade_by_label.yml -e label_selector=env=test -e target_version=v1.94.2` | Upgrades the matching collectors and waits for them to report the target version. |
+
+Combine labels with commas to narrow the set, for example `-e label_selector=env=test,configuration=my-config`. The playbook stops with an error if no collector matches the selector.
+
+The upgrade scope, wait time, and secrets notes from the first playbook apply here too.
+
+### Test status
+
+The `plan` stage was run against Bindplane Cloud with a single label, a two-label selector, and a selector that matches nothing; all behaved as described. The two `upgrade` tasks are the same as in the first playbook and have not been run, for the same reason.
 
 ## Troubleshooting
 
