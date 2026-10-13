@@ -4,16 +4,16 @@ Oct 13, 2026 · @Dan
 
 **Contents**
 
-- [Overview](#mt863tt25ey.77)
-- [Prerequisites](#mt863tt25ey.722)
-- [Step 1: Find the collectors that match the attribute](#mt863tt25ey.1676)
-- [Step 2: Apply the label](#mt863tt25ey.2702)
-- [Step 3: Verify the label](#mt863tt25ey.4033)
-- [Step 4: Upgrade the labeled collectors to a specific version](#mt863tt25ey.4682)
-- [Step 5: Verify the upgrade](#mt863tt25ey.6002)
-- [Ansible playbook](#mt863tt25ey.6902)
-- [Ansible playbook: upgrade collectors that are already labeled](#mt863tt25ey.16195)
-- [Troubleshooting](#mt863tt25ey.14778)
+- [Overview](#overview)
+- [Prerequisites](#prerequisites)
+- [Step 1: Find the collectors that match the attribute](#step-1-find-the-collectors-that-match-the-attribute)
+- [Step 2: Apply the label](#step-2-apply-the-label)
+- [Step 3: Verify the label](#step-3-verify-the-label)
+- [Step 4: Upgrade the labeled collectors to a specific version](#step-4-upgrade-the-labeled-collectors-to-a-specific-version)
+- [Step 5: Verify the upgrade](#step-5-verify-the-upgrade)
+- [Ansible playbook](#ansible-playbook)
+- [Ansible playbook: upgrade collectors that are already labeled](#ansible-playbook-upgrade-collectors-that-are-already-labeled)
+- [Troubleshooting](#troubleshooting)
 
 ## Overview
 
@@ -524,3 +524,4 @@ The `plan` stage was run against Bindplane Cloud with a single label, a two-labe
 | `-q ubuntu` or `"query": "ubuntu"` matches extra collectors | A free-text query matches any field, including hostnames. | Filter on the specific field and pass explicit `ids`. |
 | Upgrade accepted (`HTTP 204`) but the version does not change | The collector is disconnected, or the version is not available for its type. | Check `STATUS`, check `bindplane get agent-versions`, and read `upgrade.error` on the collector. |
 | Single-collector upgrade returns `HTTP 409` | That collector does not support remote upgrade. | Upgrade it with its installer or package manager. |
+
