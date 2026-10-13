@@ -55,7 +55,7 @@ The API reference for your server version is served at `$BINDPLANE_URL/swagger/d
 
 ## Step 1: Find the collectors that match the attribute
 
-Filter the collector list on the attribute field with `jq` and keep the IDs. Attributes such as the operating system are fields on the collector, not labels, so a label selector cannot find them.
+Use a search query on the attribute. `bindplane get agents -q` accepts `field:value` terms, and a trailing `*` matches a prefix. Attributes such as the operating system are fields on the collector, not labels, so a label selector (`-l`) cannot find them.
 
 First look at the values the field takes across your fleet:
 
@@ -63,38 +63,47 @@ First look at the values the field takes across your fleet:
 bindplane get agents --limit 1000 -o json | jq -r '.[].operatingSystem' | sort | uniq -c
 ```
 
-Then build the list of matching IDs. This example matches every operating system string that starts with `Ubuntu`:
+Then query for the matching collectors. The `os` term matches the whole operating system string, so add `*` to cover every release:
 
 ```bash
-ids=$(bindplane get agents --limit 1000 -o json \
-  | jq -c '[.[] | select((.operatingSystem // "") | test("^Ubuntu")) | .id]')
+bindplane get agents -q 'os:Ubuntu*' --limit 1000
+```
+
+Check that the list is what you expect before going on. Query forms checked against Bindplane Cloud:
+
+| Query | Matches |
+| --- | --- |
+| `os:Ubuntu*` | Every operating system string that starts with `Ubuntu`. |
+| `os:"Ubuntu 24.04"` | That exact release. Quote values that contain a space. Matching ignores case. |
+| `os:Ubuntu` | Nothing, because no collector's operating system is exactly `Ubuntu`. |
+| `platform:linux` | Collectors whose platform is `linux`. |
+| `arch:amd64` | Collectors on that architecture. |
+| `status:connected` | Connected collectors only. |
+
+Save the matching IDs. Step 3 uses them to check the label, and the CLI alternative in Step 2 loops over them:
+
+```bash
+ids=$(bindplane get agents -q 'os:Ubuntu*' --limit 1000 -o json | jq -c '[.[].id]')
 
 echo "$ids" | jq length
 ```
 
-Check that the count is what you expect before going on. Other fields you can match the same way:
-
-| Field | Example value |
-| --- | --- |
-| `operatingSystem` | `Ubuntu 24.04` |
-| `platform` | `linux` |
-| `arch` | `amd64` |
-| `hostname` | `web-01` |
-| `version` | `v1.94.2` |
-| `type` | `com.observiq.collector` |
+With `-o json`, a query that matches nothing prints no output at all, so `jq length` also prints nothing. For an attribute that has no query term, filter the JSON on the field instead, for example `jq -c '[.[] | select((.hostname // "") | test("^web-")) | .id]'`.
 
 `get agents` returns 100 collectors by default. Raise `--limit`, or page with `--offset`, if your fleet is larger.
 
 ## Step 2: Apply the label
 
-Send the IDs and the label to the bulk label endpoint, `PATCH /v1/collectors/labels`, in one call:
+Send the same query and the label to the bulk label endpoint, `PATCH /v1/collectors/labels`, in one call:
 
 ```bash
 curl -sS -w '\nHTTP %{http_code}\n' -X PATCH "$BINDPLANE_URL/v1/collectors/labels" \
   -H "X-Bindplane-Api-Key: $BINDPLANE_API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"ids\": $ids, \"labels\": {\"env\": \"test\"}, \"includeFailedIds\": true}"
+  -d '{"query": "os:Ubuntu*", "labels": {"env": "test"}}'
 ```
+
+The server selects the collectors from the query, so no ID list is needed.
 
 A successful call returns `HTTP 200` and a body like `{"errors":[],"count":9}`, where `count` is the number of collectors updated. Keep the `-w` option: a missing or wrong API key returns `HTTP 401` with an empty body, which otherwise looks like nothing happened.
 
@@ -107,7 +116,7 @@ Request body fields:
 | `overwrite` | Set to `true` to change a label that already exists with a different value. Defaults to `false`. |
 | `includeFailedIds` | Returns the IDs that could not be updated in `failedIds`. |
 | `selector` | Alternative to `ids`: target collectors by an existing label, for example `configuration=my-config`. |
-| `query` | Alternative to `ids`: target collectors by a search string. |
+| `query` | Alternative to `ids`: target collectors by a search query, as in the call above. Send one of the three. |
 
 **CLI alternative.** The CLI labels one collector per call, so loop over the IDs:
 
@@ -221,10 +230,9 @@ Save it as `bindplane_label_upgrade.yml`:
     bindplane_url: "https://app.bindplane.com"
     bindplane_api_key: "{{ lookup('ansible.builtin.env', 'BINDPLANE_API_KEY') }}"
 
-    # Attribute to match. Any top-level string field on a collector works,
-    # for example operatingSystem, platform, arch, hostname, version.
-    match_field: operatingSystem
-    match_regex: "^Ubuntu"
+    # Search query that selects the collectors to label, the same syntax as
+    # `bindplane get agents -q`. A trailing * matches a prefix.
+    match_query: "os:Ubuntu*"
 
     # Label to apply to the matching collectors.
     label_key: env
@@ -248,25 +256,21 @@ Save it as `bindplane_label_upgrade.yml`:
         fail_msg: "Set BINDPLANE_API_KEY (an empty key returns a 401 with no body)."
       tags: [always]
 
-    - name: List all collectors
+    - name: List collectors that match the query
       ansible.builtin.uri:
-        url: "{{ bindplane_url }}/v1/collectors?limit={{ page_limit }}"
+        url: "{{ bindplane_url }}/v1/collectors?limit={{ page_limit }}&query={{ match_query | urlencode }}"
         headers: "{{ api_headers }}"
         return_content: true
-      register: all_collectors
+      register: matched
       tags: [label]
 
-    - name: Select collectors whose attribute matches
+    - name: Work out which matching collectors still need the label
       ansible.builtin.set_fact:
         match_ids: >-
-          {{ all_collectors.json.agents
-             | selectattr(match_field, 'string')
-             | selectattr(match_field, 'match', match_regex)
+          {{ matched.json.agents | default([], true)
              | map(attribute='id') | list }}
         unlabeled_ids: >-
-          {{ all_collectors.json.agents
-             | selectattr(match_field, 'string')
-             | selectattr(match_field, 'match', match_regex)
+          {{ matched.json.agents | default([], true)
              | rejectattr('labels.' ~ label_key, 'equalto', label_value)
              | map(attribute='id') | list }}
       tags: [label]
@@ -274,7 +278,7 @@ Save it as `bindplane_label_upgrade.yml`:
     - name: Stop if nothing matched
       ansible.builtin.assert:
         that: match_ids | length > 0
-        fail_msg: "No collectors have {{ match_field }} matching {{ match_regex }}."
+        fail_msg: "No collectors match the query {{ match_query }}."
         success_msg: "{{ match_ids | length }} collectors matched, {{ unlabeled_ids | length }} still need the label."
       tags: [label]
 
@@ -376,7 +380,7 @@ Override any variable on the command line, for example:
 
 ```bash
 ansible-playbook bindplane_label_upgrade.yml \
-  -e match_field=platform -e match_regex='^windows$' \
+  -e match_query='os:"Ubuntu 24.04"' \
   -e label_key=ring -e label_value=canary \
   -e target_version=v1.94.2
 ```
@@ -520,8 +524,7 @@ The `plan` stage was run against Bindplane Cloud with a single label, a two-labe
 | `curl` prints nothing and no labels change | `BINDPLANE_API_KEY` is empty or wrong. The server returns `HTTP 401` with an empty body. | Export the key and keep `-w '\nHTTP %{http_code}\n'` on every `curl`. |
 | Label call returns `count` lower than expected, or entries in `errors` or `failedIds` | Some collectors already have the label key with a different value. | Resend with `"overwrite": true`, or `--overwrite` on the CLI. |
 | Fewer collectors found than you expect | `get agents` and `GET /v1/collectors` return 100 by default. | Raise `--limit` (or `limit=`), or page with `--offset`. |
-| A label selector finds nothing for an attribute such as the OS | Attributes like `operatingSystem` are fields, not labels. | Filter the JSON output on the field, as in Step 1. |
-| `-q ubuntu` or `"query": "ubuntu"` matches extra collectors | A free-text query matches any field, including hostnames. | Filter on the specific field and pass explicit `ids`. |
+| A label selector finds nothing for an attribute such as the OS | Attributes like `operatingSystem` are fields, not labels. | Use a search query such as os:Ubuntu\*, as in Step 1. |
+| `-q ubuntu` or `"query": "ubuntu"` matches extra collectors | A free-text query matches any field, including hostnames. | Use a field term such as os:Ubuntu\*, or pass explicit `ids`. |
 | Upgrade accepted (`HTTP 204`) but the version does not change | The collector is disconnected, or the version is not available for its type. | Check `STATUS`, check `bindplane get agent-versions`, and read `upgrade.error` on the collector. |
 | Single-collector upgrade returns `HTTP 409` | That collector does not support remote upgrade. | Upgrade it with its installer or package manager. |
-
