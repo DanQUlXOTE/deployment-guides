@@ -2,6 +2,19 @@
 
 Oct 13, 2026 · @Dan
 
+**Contents**
+
+- [Overview](#mt863tt25ey.77)
+- [Prerequisites](#mt863tt25ey.722)
+- [Step 1: Find the collectors that match the attribute](#mt863tt25ey.1676)
+- [Step 2: Apply the label](#mt863tt25ey.2702)
+- [Step 3: Verify the label](#mt863tt25ey.4033)
+- [Step 4: Upgrade the labeled collectors to a specific version](#mt863tt25ey.4682)
+- [Step 5: Verify the upgrade](#mt863tt25ey.6002)
+- [Ansible playbook](#mt863tt25ey.6902)
+- [Ansible playbook: upgrade collectors that are already labeled](#mt863tt25ey.16195)
+- [Troubleshooting](#mt863tt25ey.14778)
+
 ## Overview
 
 This procedure labels every collector that shares an attribute, then upgrades only the collectors carrying that label to a pinned version. The running example labels all Ubuntu hosts with `env=test` and upgrades them.
