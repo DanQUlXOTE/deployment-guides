@@ -16,6 +16,8 @@ The flow is the same whichever tool you use:
 
 Steps 1 to 5 use the `bindplane` CLI and the REST API from a shell. The Ansible section runs the same flow as one playbook. Commands were checked against Bindplane CLI v1.94.0 and Bindplane Cloud.
 
+If the collectors that you want to upgrade already have a label you want to use, skip to step 4.
+
 ## Prerequisites
 
 You need a working CLI profile, an API key exported in the shell, and `jq`.
