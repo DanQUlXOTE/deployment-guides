@@ -1,0 +1,671 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Log Collector LB Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: control-panel left (sticky on desktop), live output right; troubleshooting and references span full width below. */
+:root {
+  --bg: #f3f5f7;
+  --panel: #ffffff;
+  --sunk: #e8ecf0;
+  --fg: #16202a;
+  --muted: #586776;
+  --line: #d3dae1;
+  --accent: #0b6e8a;
+  --accent-soft: #dbeef3;
+  --code-bg: #101820;
+  --code-fg: #d6e2ea;
+  --code-dim: #7d93a3;
+  --req: #b4361f;   --req-soft: #fbe6e1;
+  --rec: #0b6e8a;   --rec-soft: #dbeef3;
+  --warn: #9a6400;  --warn-soft: #fbf0d6;
+  --ok: #2c7a3f;    --ok-soft: #e0f2e4;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e141a; --panel: #151e26; --sunk: #1b262f; --fg: #e3eaf0; --muted: #93a4b3; --line: #2a3843;
+    --accent: #4fb8d4; --accent-soft: #15323c; --code-bg: #0a0f14; --code-fg: #d6e2ea; --code-dim: #6f8696;
+    --req: #f08a72; --req-soft: #3a1d17; --rec: #4fb8d4; --rec-soft: #15323c;
+    --warn: #e6b450; --warn-soft: #33280f; --ok: #6fcf86; --ok-soft: #16301d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e141a; --panel: #151e26; --sunk: #1b262f; --fg: #e3eaf0; --muted: #93a4b3; --line: #2a3843;
+  --accent: #4fb8d4; --accent-soft: #15323c; --code-bg: #0a0f14; --code-fg: #d6e2ea; --code-dim: #6f8696;
+  --req: #f08a72; --req-soft: #3a1d17; --rec: #4fb8d4; --rec-soft: #15323c;
+  --warn: #e6b450; --warn-soft: #33280f; --ok: #6fcf86; --ok-soft: #16301d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.55 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 48px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; }
+header.top { padding-block: 32px 24px; border-bottom: 1px solid var(--line); margin-bottom: 24px; display: grid; gap: 8px; }
+.eyebrow { font: 500 12px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(28px, 4vw, 40px)/1.1 var(--f-display); margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font: 700 22px/1.2 var(--f-display); margin: 0; text-wrap: balance; }
+h3 { font: 600 16px/1.3 var(--f-body); margin: 0; }
+.lede { color: var(--muted); max-width: 68ch; margin: 0; }
+code, .mono { font-family: var(--f-mono); font-size: .9em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.main { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 28px; align-items: start; }
+@media (max-width: 900px) { .main { grid-template-columns: minmax(0, 1fr); } }
+
+/* Control panel */
+.controls { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; display: grid; gap: 20px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+@media (max-width: 900px) { .controls { position: static; } }
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; min-width: 0; }
+legend { font: 500 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; padding: 0; }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--sunk); border-radius: 6px; padding: 3px; gap: 3px; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { text-align: center; padding: 7px 4px; border-radius: 4px; cursor: pointer; font-weight: 500; font-size: 14px; color: var(--muted); }
+.seg input:checked + label { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); }
+.seg input:disabled + label { opacity: .4; cursor: not-allowed; }
+select, input[type=text] {
+  width: 100%; font: 14px var(--f-body); color: var(--fg); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
+}
+input[type=text] { font-family: var(--f-mono); font-size: 13px; }
+.hint { font-size: 13px; color: var(--muted); margin: 0; }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; cursor: pointer; }
+.check input { margin-top: 3px; accent-color: var(--accent); }
+.check small { display: block; color: var(--muted); font-size: 12.5px; }
+details.names summary { cursor: pointer; font: 500 11px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding-block: 4px; }
+.names-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.names-grid label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+.names-grid .full { grid-column: 1 / -1; }
+
+/* Output */
+.output { display: grid; gap: 24px; min-width: 0; }
+.summary { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; display: grid; gap: 14px; }
+.summary-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: baseline; justify-content: space-between; }
+.verdict { font: 600 17px/1.4 var(--f-body); margin: 0; max-width: 70ch; }
+.counts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pill { display: inline-flex; align-items: center; font: 500 11.5px/1 var(--f-mono); letter-spacing: .04em; padding: 5px 9px; border-radius: 999px; white-space: nowrap; flex: none; }
+.pill.req { background: var(--req-soft); color: var(--req); }
+.pill.rec { background: var(--rec-soft); color: var(--rec); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+
+.flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font: 13px var(--f-mono); color: var(--muted); }
+.flow .node { background: var(--sunk); color: var(--fg); padding: 5px 9px; border-radius: 4px; }
+.flow .arrow { color: var(--accent); }
+
+.recs { display: grid; gap: 10px; }
+.advice { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; min-width: 0; }
+.advice.lvl-req { border-left-color: var(--req); }
+.advice.lvl-rec { border-left-color: var(--rec); }
+.advice.lvl-warn { border-left-color: var(--warn); }
+.rec-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.advice p { margin: 0; color: var(--fg); max-width: 75ch; }
+.advice .why { color: var(--muted); font-size: 14px; }
+.advice code { background: var(--sunk); padding: 1px 5px; border-radius: 3px; }
+
+.codebox { background: var(--code-bg); border-radius: 8px; overflow: hidden; min-width: 0; }
+.codebar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.codebar span { font: 500 12px var(--f-mono); color: var(--code-dim); letter-spacing: .04em; }
+.btn { font: 500 13px var(--f-body); border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.codebox .btn { background: transparent; border-color: rgba(255,255,255,.2); color: var(--code-fg); }
+.codebox .btn:hover { border-color: var(--code-fg); color: #fff; }
+pre { margin: 0; padding: 14px 16px; overflow-x: auto; font: 12.5px/1.6 var(--f-mono); color: var(--code-fg); white-space: pre; }
+pre .c { color: var(--code-dim); }
+
+/* Troubleshooting */
+section.block { margin-top: 40px; display: grid; gap: 16px; }
+.block-head { display: grid; gap: 6px; }
+.symptoms { display: flex; flex-wrap: wrap; gap: 8px; }
+.symptoms button {
+  font: 500 14px var(--f-body); padding: 8px 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+}
+.symptoms button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+.ts { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; display: grid; gap: 18px; }
+.ts-cause { margin: 0; color: var(--muted); max-width: 75ch; }
+ol.steps { list-style: none; counter-reset: s; margin: 0; padding: 0; display: grid; gap: 14px; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 12px; }
+ol.steps > li::before {
+  content: counter(s); grid-row: span 3; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font: 600 13px/26px var(--f-mono); text-align: center;
+}
+.step-title { font-weight: 600; }
+.step-look { color: var(--muted); font-size: 14px; margin: 0; }
+.step-look b { color: var(--fg); font-weight: 600; }
+.mini { background: var(--code-bg); border-radius: 6px; position: relative; min-width: 0; }
+.mini pre { padding: 10px 12px; padding-right: 64px; font-size: 12px; }
+.mini .btn { position: absolute; top: 6px; right: 6px; font-size: 11.5px; padding: 3px 8px; background: transparent; border-color: rgba(255,255,255,.2); color: var(--code-fg); }
+.tag { font: 500 10.5px var(--f-mono); color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; margin-left: 6px; vertical-align: 2px; }
+
+.refs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.refs a { display: grid; gap: 4px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; color: var(--fg); text-decoration: none; min-width: 0; }
+.refs a:hover { border-color: var(--accent); }
+.refs .k { font: 500 12px var(--f-mono); color: var(--accent); }
+.refs .d { font-size: 13px; color: var(--muted); }
+.foot { margin-top: 32px; font-size: 13px; color: var(--muted); max-width: 80ch; }
+@media (prefers-reduced-motion: no-preference) { .advice, .ts { animation: in .18s ease-out; } @keyframes in { from { transform: translateY(3px); } to { transform: none; } } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <span class="eyebrow">F5 BIG-IP LTM &rarr; Bindplane collectors</span>
+    <h1>Log Collector Load Balancing Guide</h1>
+    <p class="lede">Pick how your logs arrive and the page builds the F5 settings, a tmsh starting point, and the checks to run when traffic piles onto one collector. Settings change as you choose.</p>
+  </header>
+
+  <div class="main">
+    <form class="controls" id="form" autocomplete="off">
+      <fieldset>
+        <legend>Log source</legend>
+        <select id="source">
+          <option value="panorama">Panorama (forwarding syslog)</option>
+          <option value="lc">Panorama Log Collectors (collector group)</option>
+          <option value="fw">Firewalls sending directly</option>
+          <option value="netdev">Network devices (switches, routers, WLC)</option>
+          <option value="relay">Syslog relays (rsyslog / syslog-ng)</option>
+          <option value="otlp">Bindplane / OTel agents (OTLP gRPC)</option>
+        </select>
+        <p class="hint" id="sourceHint"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Transport</legend>
+        <div class="seg" role="radiogroup" aria-label="Transport">
+          <input type="radio" name="transport" id="t-udp" value="udp" checked><label for="t-udp">UDP</label>
+          <input type="radio" name="transport" id="t-tcp" value="tcp"><label for="t-tcp">TCP</label>
+          <input type="radio" name="transport" id="t-tls" value="tls"><label for="t-tls">TLS</label>
+        </div>
+      </fieldset>
+
+      <fieldset id="tlsModeSet" hidden>
+        <legend>TLS handling on the F5</legend>
+        <div class="seg" style="grid-template-columns: 1fr 1fr" role="radiogroup" aria-label="TLS handling">
+          <input type="radio" name="tlsmode" id="tm-pass" value="pass" checked><label for="tm-pass">Pass-through</label>
+          <input type="radio" name="tlsmode" id="tm-term" value="term"><label for="tm-term">Terminate</label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Volume</legend>
+        <div class="seg" role="radiogroup" aria-label="Volume">
+          <input type="radio" name="volume" id="v-low" value="low"><label for="v-low">&lt; 5k EPS</label>
+          <input type="radio" name="volume" id="v-med" value="med" checked><label for="v-med">5k&ndash;50k</label>
+          <input type="radio" name="volume" id="v-high" value="high"><label for="v-high">&gt; 50k</label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Requirements</legend>
+        <label class="check"><input type="checkbox" id="preserve" checked><span>Collectors must see the original sender IP<small>Needed if Bindplane routes or tags logs by source address.</small></span></label>
+        <label class="check"><input type="checkbox" id="large"><span>Some messages exceed ~1,400 bytes<small>Long threat or URL logs, Windows events, JSON payloads.</small></span></label>
+      </fieldset>
+
+      <details class="names">
+        <summary>Names and addresses for the generated config</summary>
+        <div class="names-grid">
+          <label>Name prefix<input type="text" id="prefix" value="bindplane"></label>
+          <label>Listen port<input type="text" id="port" value="514"></label>
+          <label class="full">Virtual server IP<input type="text" id="vip" value="10.10.20.50"></label>
+          <label class="full">Collectors (comma separated)<input type="text" id="members" value="10.10.30.11, 10.10.30.12, 10.10.30.13"></label>
+          <label class="full">Collector health port<input type="text" id="hport" value="13133"></label>
+        </div>
+      </details>
+    </form>
+
+    <div class="output" aria-live="polite">
+      <div class="summary">
+        <div class="summary-head">
+          <h2>Recommendations</h2>
+          <div class="counts" id="counts"></div>
+        </div>
+        <p class="verdict" id="verdict"></p>
+        <div class="flow" id="flow"></div>
+      </div>
+      <div class="recs" id="recs"></div>
+      <div class="codebox">
+        <div class="codebar"><span id="codeLabel">tmsh &middot; starting point</span><button type="button" class="btn" id="copyCfg">Copy</button></div>
+        <pre id="cfg"></pre>
+      </div>
+    </div>
+  </div>
+
+  <section class="block" id="troubleshoot">
+    <div class="block-head">
+      <span class="eyebrow">Troubleshooting</span>
+      <h2>What are you seeing?</h2>
+      <p class="lede">Steps are ordered cheapest check first and use the names you entered above. Steps that don't apply to your transport are hidden.</p>
+    </div>
+    <div class="symptoms" id="symptoms" role="group" aria-label="Symptoms"></div>
+    <div class="ts" id="ts"></div>
+  </section>
+
+  <section class="block">
+    <div class="block-head">
+      <span class="eyebrow">Reference</span>
+      <h2>F5 documentation</h2>
+    </div>
+    <div class="refs">
+      <a href="https://my.f5.com/manage/s/article/K7535" target="_blank" rel="noopener"><span class="k">K7535</span><span>Overview of the UDP profile</span><span class="d">Datagram LB, idle timeout, and when Immediate suits stateless syslog.</span></a>
+      <a href="https://support.f5.com/csp/article/K26080852" target="_blank" rel="noopener"><span class="k">K26080852</span><span>UDP virtual servers have connection table entries</span><span class="d">Why UDP still forms flows that pin a sender to one member.</span></a>
+      <a href="https://my.f5.com/manage/s/article/K54032900" target="_blank" rel="noopener"><span class="k">K54032900</span><span>UDP port exhaustion with the default idle timeout</span><span class="d">High-volume syslog on 514; recommends 5 seconds or less.</span></a>
+      <a href="https://my.f5.com/manage/s/article/K54414344" target="_blank" rel="noopener"><span class="k">K54414344</span><span>Troubleshooting UDP traffic</span><span class="d">General UDP diagnosis on BIG-IP.</span></a>
+      <a href="https://support.f5.com/csp/article/K44907534" target="_blank" rel="noopener"><span class="k">K44907534</span><span>Fast-forwarded UDP drops with Datagram LB</span><span class="d">Archived known issue when TMM is overloaded. Check your version.</span></a>
+      <a href="https://my.f5.com/manage/s/article/K7606" target="_blank" rel="noopener"><span class="k">K7606</span><span>BIG-IP idle session timeouts</span><span class="d">How TCP and UDP idle timeouts interact.</span></a>
+      <a href="https://clouddocs.f5.com/cli/tmsh-reference/v15/modules/ltm/ltm_profile_udp.html" target="_blank" rel="noopener"><span class="k">tmsh</span><span>ltm profile udp reference</span><span class="d">Exact option names and defaults.</span></a>
+      <a href="https://techdocs.f5.com/en-us/bigip-21-0-0/big-ip-local-traffic-management-profiles-reference/protocol-profiles.html" target="_blank" rel="noopener"><span class="k">Manual</span><span>Protocol profiles (BIG-IP 21.0)</span><span class="d">UDP, TCP, and Fast L4 profile settings.</span></a>
+      <a href="https://community.f5.com/discussions/technicalforum/load-balancing-syslog-to-a-pool-of-syslog-receivers/130637" target="_blank" rel="noopener"><span class="k">DevCentral</span><span>Load balancing syslog to a pool of receivers</span><span class="d">Community thread on this exact setup.</span></a>
+    </div>
+    <p class="foot">The tmsh output is a starting point to review, not a change to paste into production. Check option names against your BIG-IP version, and test iRules in a lab under realistic load first. The health check assumes the OpenTelemetry <code>health_check</code> extension is enabled on each collector. Curl it once to confirm the response text.</p>
+  </section>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const clean = (s, fb) => (String(s || "").trim().replace(/[^A-Za-z0-9_.:\-]/g, "") || fb);
+
+  const SOURCES = {
+    panorama: { few: true, label: "Panorama", hint: "One sender, constant stream. The classic case for traffic sticking to one collector." },
+    lc:       { few: true, label: "Log Collectors", hint: "A handful of senders. Per-connection balancing spreads them, but only as evenly as their volumes." },
+    fw:       { few: false, label: "Firewalls", hint: "Many senders. Normal per-flow balancing usually spreads load well on its own." },
+    netdev:   { few: false, label: "Network devices", hint: "Many low-volume senders. Per-flow balancing works; focus on timeouts and health checks." },
+    relay:    { few: true, label: "Syslog relays", hint: "Few senders that aggregate many. Same pinning risk as Panorama." },
+    otlp:     { few: true, label: "OTel agents", hint: "OTLP gRPC runs over long-lived HTTP/2 connections. TCP or TLS only." }
+  };
+  const DEFAULT_PORT = { udp: "514", tcp: "514", tls: "6514", otlp: "4317" };
+
+  function state() {
+    const f = $("form");
+    const source = $("source").value;
+    let transport = f.querySelector("input[name=transport]:checked").value;
+    if (source === "otlp" && transport === "udp") transport = "tls";
+    return {
+      source, transport,
+      tlsmode: f.querySelector("input[name=tlsmode]:checked").value,
+      volume: f.querySelector("input[name=volume]:checked").value,
+      preserve: $("preserve").checked,
+      large: $("large").checked,
+      p: clean($("prefix").value, "bindplane"),
+      port: clean($("port").value, "514"),
+      vip: clean($("vip").value, "10.10.20.50"),
+      hport: clean($("hport").value, "13133"),
+      members: $("members").value.split(/[,\s]+/).map((m) => clean(m, "")).filter(Boolean)
+    };
+  }
+
+  function buildRecs(s) {
+    const few = SOURCES[s.source].few;
+    const otlp = s.source === "otlp";
+    const R = [];
+    const add = (lvl, title, body, why) => R.push({ lvl, title, body, why });
+    const inspectable = s.transport === "tcp" || (s.transport === "tls" && s.tlsmode === "term");
+
+    if (otlp) {
+      add("req", "Balance per request, not per connection",
+        "gRPC keeps one HTTP/2 connection open and sends every export over it. A plain TCP virtual server pins each agent to one collector for the life of that connection. Use an HTTP/2 full-proxy virtual server (HTTP + HTTP/2 profiles on both client and server side, with TLS terminated on the F5) so each request is balanced on its own.",
+        "HTTP/2 full proxy needs a recent BIG-IP release. Confirm support and profile names for your version before building it.");
+      add("rec", "Or skip the F5 for agent traffic",
+        "If HTTP/2 full proxy isn't available, many agents each holding one connection will still spread reasonably with Least Connections. You can also have agents send to a Bindplane gateway tier that fans out on its own.",
+        "With many agents, per-connection balancing evens out. With a few busy agents it doesn't.");
+    } else if (s.transport === "udp") {
+      if (few) {
+        add("req", "Turn on Datagram LB in the UDP profile",
+          "Set <code>datagram-load-balancing enabled</code> and <code>idle-timeout immediate</code>. Each datagram then gets its own load balancing decision instead of following the first flow forever.",
+          "One sender reusing one source port never lets the flow age out, so every log follows the first pick.");
+      } else {
+        add("rec", "Use a short UDP idle timeout",
+          "Many senders spread across collectors per flow without Datagram LB. Set <code>idle-timeout 5</code> so flows age out and rebalance. Turn on Datagram LB only if one sender is much busier than the rest.",
+          "F5 K54032900 recommends 5 seconds or less for high-volume UDP to avoid port exhaustion.");
+      }
+      add("req", "Use a Standard virtual server, not Performance (Layer 4)",
+        "Fast L4 virtual servers don't apply UDP profile Datagram LB. Check with <code>tmsh list ltm virtual &lt;vs&gt; profiles</code>.",
+        "A FastL4 virtual server is the most common reason Datagram LB seems to have no effect.");
+    } else {
+      // TCP / TLS syslog
+      if (few) {
+        if (inspectable) {
+          add("req", "Rebalance inside the connection with an iRule",
+            "One long-lived connection means one pick. The generated iRule releases complete lines and calls <code>LB::detach</code> so each batch can go to a different collector.",
+            "Round Robin and Least Connections only choose when a connection opens.");
+          add("warn", "Confirm message framing first",
+            "The iRule assumes newline-delimited messages (non-transparent framing). If your sender uses octet counting (the message starts with a length), splitting on newlines will break messages. Check with a packet capture.",
+            "PAN-OS has BSD and IETF formats. Confirm on the wire rather than assuming.");
+        } else {
+          add("req", "Pass-through TLS can't be rebalanced mid-connection",
+            "The F5 can't see message boundaries inside encrypted traffic, so one connection stays on one collector. Terminate TLS on the F5 (client-ssl and server-ssl) to use the rebalancing iRule, or change the design.",
+            "Encrypted bytes give the F5 nothing to split on.");
+        }
+        add("rec", "Better: give the F5 more connections to spread",
+          s.source === "panorama"
+            ? "Have the firewalls or Log Collectors forward syslog straight to the virtual server. Each opens its own connection, so normal balancing spreads them. If you can accept UDP, switching to UDP with Datagram LB is the simplest fix."
+            : "More senders means more connections and better spread. If you can accept UDP, UDP with Datagram LB balances per message without iRules.",
+          "This avoids per-message tricks on the F5 entirely.");
+      } else {
+        add("rec", "Least Connections across many senders",
+          "With many senders each holding a connection, <code>least-connections-member</code> keeps connection counts even. Volume per connection still varies, so expect some skew.",
+          "Each sender is pinned, but there are enough of them to even out.");
+      }
+      add("req", "Set Action on Service Down to Reset",
+        "Set <code>service-down-action reset</code> on the pool. When a collector fails, its connections are reset and the senders reconnect to a healthy member.",
+        "Without it, senders can keep writing into a dead connection until it times out, and those logs are lost.");
+    }
+
+    add("req", "Remove persistence",
+      "Set <code>persist none</code> and check no iRule calls <code>persist</code>. Source-address persistence alone causes the stuck-to-one-collector symptom.",
+      "Persistence overrides any load balancing method.");
+
+    add("rec", "Monitor the collector, not the port",
+      `Use an HTTP monitor against the OpenTelemetry <code>health_check</code> extension on port <code>${esc(s.hport)}</code>. ` +
+      (s.transport === "udp" ? "A UDP monitor can't tell a running syslog listener from a dead one, because syslog never replies." : "A TCP port check only proves the socket is open, not that the pipeline is exporting."),
+      "Without a real health check, the F5 keeps sending to a collector that has stopped processing.");
+
+    if (s.transport === "udp" || otlp) {
+      add("rec", "Round Robin with no slow ramp",
+        otlp ? "Use Round Robin for per-request balancing with HTTP/2 full proxy." : "Least Connections means little when there are no lasting connections. Set <code>slow-ramp-time 0</code> so a recovered collector takes its share immediately.",
+        "Slow ramp holds back traffic from a member that just came back up.");
+    }
+
+    if (s.preserve) {
+      if (s.transport === "udp") {
+        add("rec", "No SNAT needed for UDP",
+          "Syslog over UDP is one-way, so collectors don't need to reply through the F5. Leave SNAT off and Bindplane sees the real sender IP.",
+          "Return routing only matters when the server answers.");
+      } else {
+        add("warn", "Without SNAT, return traffic must route through the F5",
+          "TCP replies must go back through the F5. Make the F5 self IP the collectors' default gateway, or add routes for the sender subnets via the F5. Otherwise the handshake fails.",
+          "Asymmetric routing breaks TCP when SNAT is off.");
+      }
+    } else {
+      add("rec", s.volume === "high" ? "Use a SNAT pool, not automap" : "SNAT automap is fine",
+        s.volume === "high"
+          ? "At high volume, automap's single self IP can run out of source ports. A SNAT pool with several addresses spreads them. Collectors will see SNAT addresses, not sender IPs."
+          : "Collectors will see the F5's self IP as the source. Bindplane can't route or tag by sender IP in that case.",
+        s.volume === "high" ? "A DevCentral user reported SNAT exhaustion and drops after enabling Datagram LB with automap." : "Automap is the least setup for routing.");
+    }
+
+    if (s.transport === "udp" && few) {
+      if (s.volume === "high") {
+        add("warn", "Watch TMM CPU",
+          "Datagram LB makes one decision per packet. At high volume that's real CPU load. Watch <code>tmsh show sys tmm-info</code> after the change, and see known issue K44907534 about drops when TMM is overloaded.",
+          "F5 notes that more decisions mean more CPU.");
+      }
+    }
+    if (s.large && s.transport === "udp") {
+      add("warn", "Fragmented messages can split across collectors",
+        "With Datagram LB, fragments of one large message can land on different collectors and arrive truncated. Raise the MTU on the path, have the sender trim messages, or move this source to TCP.",
+        "Each fragment is a separate decision once per-packet balancing is on.");
+    }
+    if (s.transport === "tls" && s.tlsmode === "term") {
+      add("rec", "Use a certificate that matches what senders expect",
+        "The client-ssl profile's certificate must match the hostname or IP the senders are set to verify. Use a server-ssl profile to re-encrypt toward collectors, or send plain TCP to them if the network is trusted.",
+        "Certificate mismatch is the most common TLS handshake failure after moving to the F5.");
+    }
+    if (s.transport !== "udp" && !otlp) {
+      add("rec", "TCP idle timeout longer than sender quiet periods",
+        "Use a TCP profile with <code>idle-timeout</code> above the longest quiet gap from a sender (600 seconds is a reasonable start). A timeout that's too short drops idle connections and causes reconnect storms.",
+        "Low-volume senders can go quiet for minutes.");
+    }
+
+    add("rec", "Same receiver config on every collector",
+      `Each collector needs the same receiver: protocol ${s.transport.toUpperCase()}, port <code>${esc(s.port)}</code>${otlp ? "" : ", and the same framing and format settings"}. Any message can land on any collector.`,
+      "Config drift between collectors shows up as messages parsed differently or rejected.");
+
+    return R;
+  }
+
+  function verdict(s) {
+    const few = SOURCES[s.source].few;
+    if (s.source === "otlp") return "OTLP gRPC sticks to one collector per connection. Balance per request with an HTTP/2 full proxy, or rely on many agents to even out.";
+    if (s.transport === "udp") return few
+      ? "One busy UDP sender gets pinned by flow tracking. Datagram LB fixes it, with a check on TMM CPU at high volume."
+      : "Many UDP senders spread naturally. Keep flows short-lived and health checks real.";
+    if (few) return (s.transport === "tls" && s.tlsmode === "pass")
+      ? "A few long-lived encrypted connections can't be split. Terminate TLS on the F5, add senders, or move to UDP."
+      : "A few long-lived TCP connections pin to one collector each. Rebalance with an iRule, add senders, or move to UDP.";
+    return "Many TCP senders spread by connection count. Focus on failover and timeouts.";
+  }
+
+  function buildConfig(s) {
+    const L = [];
+    const c = (t) => L.push(`<span class="c"># ${esc(t)}</span>`);
+    const l = (t) => L.push(esc(t));
+    const few = SOURCES[s.source].few;
+    const otlp = s.source === "otlp";
+    const p = s.p;
+    const members = s.members.length ? s.members : ["10.10.30.11"];
+    const mem = members.map((m) => `${m}:${s.port}`).join(" ");
+    const inspectable = s.transport === "tcp" || (s.transport === "tls" && s.tlsmode === "term");
+
+    c("Health monitor: OpenTelemetry health_check extension on each collector");
+    c(`Confirm the response text first: curl http://<collector>:${s.hport}/`);
+    l(`create ltm monitor http ${p}_health defaults-from http destination *:${s.hport} send "GET / HTTP/1.0\\r\\n\\r\\n" recv "Server available" interval 5 timeout 16`);
+    L.push("");
+
+    const lb = s.transport === "udp" || otlp ? "round-robin" : (few ? "round-robin" : "least-connections-member");
+    c("Pool");
+    l(`create ltm pool ${p}_pool load-balancing-mode ${lb} slow-ramp-time 0` +
+      (s.transport !== "udp" ? " service-down-action reset" : "") +
+      ` monitor ${p}_health members add { ${mem} }`);
+    L.push("");
+
+    if (otlp) {
+      c("OTLP gRPC: build an HTTP/2 full-proxy virtual server with TLS terminated on the F5.");
+      c("Profile names and server-side HTTP/2 support depend on your BIG-IP version,");
+      c("so this part is left for you to build in the GUI or from your version's docs.");
+      c(`Virtual server: ${s.vip}:${s.port}, pool ${p}_pool, persist none`);
+      return L.join("\n");
+    }
+
+    let profiles;
+    if (s.transport === "udp") {
+      c("UDP profile");
+      if (few) l(`create ltm profile udp ${p}_udp defaults-from udp datagram-load-balancing enabled idle-timeout immediate`);
+      else l(`create ltm profile udp ${p}_udp defaults-from udp idle-timeout 5`);
+      profiles = `${p}_udp`;
+    } else {
+      c("TCP profile");
+      l(`create ltm profile tcp ${p}_tcp defaults-from tcp idle-timeout 600`);
+      profiles = `${p}_tcp`;
+      if (s.transport === "tls" && s.tlsmode === "term") {
+        L.push("");
+        c("TLS termination: replace the cert/key with one senders will trust");
+        l(`create ltm profile client-ssl ${p}_clientssl defaults-from clientssl cert-key-chain replace-all-with { ${p}_cert { cert ${p}.crt key ${p}.key } }`);
+        l(`create ltm profile server-ssl ${p}_serverssl defaults-from serverssl`);
+        profiles += ` ${p}_clientssl { context clientside } ${p}_serverssl { context serverside }`;
+      }
+    }
+    L.push("");
+
+    let rule = "";
+    if (s.transport !== "udp" && few && inspectable) {
+      c("iRule: rebalance per batch of complete lines (newline framing only)");
+      L.push(esc(`create ltm rule ${p}_rebalance {
+when CLIENT_ACCEPTED { TCP::collect }
+when CLIENT_DATA {
+  set last [string last "\\n" [TCP::payload]]
+  if { $last < 0 } { TCP::collect ; return }
+  LB::detach
+  TCP::release [expr {$last + 1}]
+  TCP::collect
+}
+}`));
+      L.push("");
+      rule = ` rules { ${p}_rebalance }`;
+    }
+
+    let snat;
+    if (s.preserve) snat = "none";
+    else if (s.volume === "high") {
+      c("SNAT pool: add more addresses if you see port exhaustion");
+      l(`create ltm snatpool ${p}_snat members add { 10.10.20.60 10.10.20.61 }`);
+      L.push("");
+      snat = `snat pool ${p}_snat`;
+    } else snat = "automap";
+
+    c("Virtual server (Standard type)");
+    l(`create ltm virtual ${p}_vs destination ${s.vip}:${s.port} ip-protocol ${s.transport === "udp" ? "udp" : "tcp"} profiles add { ${profiles} } pool ${p}_pool persist none source-address-translation { type ${snat.startsWith("snat") ? "snat pool " + p + "_snat" : snat} }${rule}`);
+    return L.join("\n");
+  }
+
+  // Troubleshooting
+  const SYMPTOMS = [
+    { id: "one", label: "Everything goes to one collector",
+      cause: (s) => s.transport === "udp"
+        ? "A UDP flow entry or persistence is pinning traffic. One sender on one source port never ages out without Datagram LB."
+        : "One long-lived connection got one load balancing decision. Persistence makes it worse.",
+      steps: (s) => [
+        { t: "Confirm the skew in pool member stats", cmd: `tmsh reset-stats ltm pool ${s.p}_pool\ntmsh show ltm pool ${s.p}_pool members field-fmt | grep -E "addr|serverside.(pkts-in|cur-conns)"`, look: "Wait a minute after reset. <b>One member with nearly all packets-in</b> confirms the problem." },
+        { t: "Check for persistence and iRules", cmd: `tmsh list ltm virtual ${s.p}_vs persist rules profiles`, look: "<b>persist</b> should be none. Look inside any iRule for <code>persist</code> commands." },
+        { t: "Check the virtual server type", only: "udp", cmd: `tmsh list ltm virtual ${s.p}_vs profiles | grep -iE "fastl4|udp"`, look: "A <b>fastL4</b> profile means Datagram LB can't apply. Rebuild as a Standard virtual server with a UDP profile." },
+        { t: "Check the UDP profile settings", only: "udp", cmd: `tmsh list ltm profile udp ${s.p}_udp datagram-load-balancing idle-timeout`, look: "Expect <b>datagram-load-balancing enabled</b> and <b>idle-timeout immediate</b> for one busy sender." },
+        { t: "Look at existing connections", cmd: `tmsh show sys connection cs-server-addr ${s.vip} cs-server-port ${s.port}`, look: s.transport === "udp" ? "<b>One long-lived entry</b> from the sender means flow tracking is still active. After fixing the profile, clear old entries with <code>tmsh delete sys connection cs-server-addr " + esc(s.vip) + "</code>." : "<b>One or two connections</b> from your sender means per-connection balancing can't spread it. See the iRule or add senders." },
+        { t: "Count senders", cmd: `tcpdump -nni 0.0:nnn dst host ${s.vip} and dst port ${s.port} -c 2000 | awk '{print $3}' | sort | uniq -c | sort -rn | head`, look: "<b>One or two source addresses</b> means you need per-message balancing (Datagram LB or the iRule), not more tuning." }
+      ] },
+    { id: "uneven", label: "Uneven but not all on one",
+      cause: () => "Senders have very different volumes, or a member is slow-ramping or briefly failing health checks.",
+      steps: (s) => [
+        { t: "Compare packets, not connections", cmd: `tmsh show ltm pool ${s.p}_pool members field-fmt | grep -E "addr|serverside.(pkts-in|bits-in|tot-conns)"`, look: "<b>Even connection counts with uneven packets</b> means a few busy senders. Balance per message to fix." },
+        { t: "Check slow ramp and ratio", cmd: `tmsh list ltm pool ${s.p}_pool slow-ramp-time load-balancing-mode members { ratio priority-group }`, look: "Expect <b>slow-ramp-time 0</b>, equal ratios, and one priority group." },
+        { t: "Look for flapping members", cmd: `grep -i "${s.p}_pool" /var/log/ltm | grep -iE "down|up" | tail -20`, look: "<b>Repeated down/up</b> means a member keeps dropping out. Fix the collector or loosen the monitor." }
+      ] },
+    { id: "failover", label: "Logs stop when a collector goes down",
+      cause: (s) => s.transport === "udp" ? "The monitor isn't detecting the failure, so the F5 keeps sending to the dead collector." : "The monitor isn't detecting the failure, or connections to the dead member aren't reset so senders don't reconnect.",
+      steps: (s) => [
+        { t: "Check what the monitor sees", cmd: `tmsh show ltm pool ${s.p}_pool members | grep -E "Ltm::Pool Member|Availability|State"`, look: "A stopped collector should show <b>offline</b> within the monitor timeout. If it still shows available, the monitor is too shallow." },
+        { t: "Test the health endpoint from the F5", cmd: `curl -s -m 3 http://<collector-ip>:${s.hport}/`, look: "Expect a response containing <b>Server available</b>. No response means the extension isn't enabled or a firewall blocks the port." },
+        { t: "Check Action on Service Down", only: "conn", cmd: `tmsh list ltm pool ${s.p}_pool service-down-action`, look: "Expect <b>reset</b>. With <b>none</b>, senders keep writing into dead connections." },
+        { t: "Check sender retry behavior", only: "conn", cmd: `tmsh show sys connection cs-server-addr ${s.vip} cs-server-port ${s.port}`, look: "After a reset, senders should open <b>new connections</b> within seconds. If not, check the sender's reconnect settings." }
+      ] },
+    { id: "trunc", label: "Truncated or malformed logs",
+      cause: (s) => s.transport === "udp" ? "Large messages fragment, and fragments go to different collectors, or the collector's max message size is too small." : "The rebalancing iRule is splitting messages because framing isn't newline-delimited, or the receiver's framing setting doesn't match the sender.",
+      steps: (s) => [
+        { t: "Look for fragments", only: "udp", cmd: `tmsh show net ipv4 | grep -i frag`, look: "<b>Fragment counters rising</b> with your log volume points at oversized datagrams." },
+        { t: "Capture a few messages", cmd: `tcpdump -nni 0.0:nnn host ${s.vip} and port ${s.port} -s0 -c 200 -w /var/tmp/${s.p}.pcap`, look: s.transport === "udp" ? "Open in Wireshark. <b>Datagrams over ~1,400 bytes</b> or IP fragments confirm the cause." : "Open in Wireshark. <b>A length number before each message</b> means octet counting, which the newline iRule will break." },
+        { t: "Check the collector receiver limits", cmd: `# On each collector, check the syslog receiver config:\n#   max_log_size / max_octets, and the framing setting`, look: "Set the <b>same framing and size limits</b> on every collector." }
+      ] },
+    { id: "drops", label: "Missing logs under load",
+      cause: (s) => s.transport === "udp" ? "UDP drops silently when TMM, SNAT ports or the collectors are overloaded." : "Collectors push back, connections hit limits, or SNAT runs out of ports.",
+      steps: (s) => [
+        { t: "Check TMM CPU", cmd: `tmsh show sys tmm-info | grep -iE "tmm|cpu"`, look: "<b>Sustained high TMM CPU</b> after enabling Datagram LB means per-packet decisions cost too much. See K44907534." },
+        { t: "Check SNAT port use", cmd: s.preserve ? "# SNAT is off in your setup; skip this step" : `tmsh show ltm snatpool ${s.p}_snat\ntmsh show sys connection cs-server-addr ${s.vip} | tail -1`, look: "<b>Very high connection counts</b> per SNAT address points at port exhaustion. Add addresses or shorten the idle timeout (K54032900)." },
+        { t: "Compare F5 output with collector input", cmd: `tmsh show ltm pool ${s.p}_pool members field-fmt | grep -E "addr|serverside.pkts-out"\n# On collectors: curl -s http://localhost:8888/metrics | grep -E "receiver_(accepted|refused)_log_records"`, look: "<b>Refused records</b> on the collector means it's overloaded. Add collectors or raise its limits." },
+        { t: "Check for UDP buffer drops on collectors", only: "udp", cmd: `# On Linux collectors:\nnetstat -su | grep -iE "receive buffer errors|packet receive errors"`, look: "<b>Receive buffer errors climbing</b> means raise <code>net.core.rmem_max</code> on the collector." }
+      ] },
+    { id: "srcip", label: "Collectors see the F5 IP",
+      cause: () => "SNAT is on, so the source address is the F5's, not the sender's.",
+      steps: (s) => [
+        { t: "Check the SNAT setting", cmd: `tmsh list ltm virtual ${s.p}_vs source-address-translation`, look: "<b>automap</b> or a SNAT pool replaces the sender IP." },
+        { t: "Turn SNAT off if routing allows", cmd: `tmsh modify ltm virtual ${s.p}_vs source-address-translation { type none }`, look: s.transport === "udp" ? "For UDP syslog this is usually safe, since collectors don't reply." : "For TCP, the collectors' route back to senders must go through the F5 first, or connections will fail." },
+        { t: "Or parse the host from the message", cmd: "# In Bindplane, use the hostname field in the syslog header\n# instead of the network source address", look: "Most senders put <b>their own hostname</b> in the syslog header, which survives SNAT." }
+      ] },
+    { id: "tls", label: "TLS handshake failures", onlyTransport: "tls",
+      cause: (s) => s.tlsmode === "term" ? "The F5's certificate doesn't match what the senders expect, or the cipher or TLS version doesn't overlap." : "Collectors' certificates don't match the virtual server's name or IP the senders connect to.",
+      steps: (s) => [
+        { t: "See the certificate the F5 presents", cmd: `openssl s_client -connect ${s.vip}:${s.port} -servername <name-senders-use> </dev/null | openssl x509 -noout -subject -ext subjectAltName -dates`, look: "The <b>subjectAltName</b> must include the name or IP the senders use, and the cert must be in date." },
+        { t: "Check handshake errors on the F5", cmd: `grep -iE "ssl|handshake" /var/log/ltm | tail -20`, look: "<b>No shared cipher</b> or protocol errors mean the client-ssl profile's ciphers or TLS versions don't overlap with the sender." },
+        { t: "Check the sender trusts the issuing CA", cmd: "# On Panorama: Device > Certificate Management > Certificates\n# The CA that issued the F5 or collector cert must be imported and trusted", look: "<b>Missing CA</b> causes the sender to drop the connection right after the server hello." }
+      ] }
+  ];
+
+  let activeSymptom = "one";
+
+  function renderSymptoms(s) {
+    const box = $("symptoms");
+    const list = SYMPTOMS.filter((x) => !x.onlyTransport || x.onlyTransport === s.transport);
+    if (!list.find((x) => x.id === activeSymptom)) activeSymptom = list[0].id;
+    box.innerHTML = list.map((x) => `<button type="button" data-id="${x.id}" aria-pressed="${x.id === activeSymptom}">${esc(x.label)}</button>`).join("");
+    const sym = SYMPTOMS.find((x) => x.id === activeSymptom);
+    const steps = sym.steps(s).filter((st) => !st.only || (st.only === "udp" ? s.transport === "udp" : s.transport !== "udp"));
+    $("ts").innerHTML =
+      `<div><h3>${esc(sym.label)}</h3><p class="ts-cause">Likely cause: ${esc(sym.cause(s))}</p></div>` +
+      `<ol class="steps">` + steps.map((st) =>
+        `<li><span class="step-title">${esc(st.t)}</span>` +
+        `<div class="mini"><pre>${esc(st.cmd)}</pre><button type="button" class="btn" data-copy>Copy</button></div>` +
+        `<p class="step-look">${st.look}</p></li>`).join("") + `</ol>`;
+  }
+
+  function render() {
+    const s = state();
+    const otlp = s.source === "otlp";
+    $("t-udp").disabled = otlp;
+    if (otlp && $("t-udp").checked) $("t-tls").checked = true;
+    $("tlsModeSet").hidden = s.transport !== "tls";
+    $("sourceHint").textContent = SOURCES[s.source].hint;
+
+    const recs = buildRecs(s);
+    const n = { req: 0, rec: 0, warn: 0 };
+    recs.forEach((r) => n[r.lvl]++);
+    $("counts").innerHTML =
+      `<span class="pill req">${n.req} required</span><span class="pill rec">${n.rec} recommended</span>` +
+      (n.warn ? `<span class="pill warn">${n.warn} watch</span>` : "");
+    $("verdict").textContent = verdict(s);
+
+    const mode = otlp ? "per request (HTTP/2)" :
+      s.transport === "udp" ? (SOURCES[s.source].few ? "per datagram" : "per flow") :
+      (SOURCES[s.source].few && (s.transport === "tcp" || s.tlsmode === "term") ? "per batch (iRule)" : "per connection");
+    const nm = s.members.length || 1;
+    $("flow").innerHTML =
+      `<span class="node">${esc(SOURCES[s.source].label)}</span><span class="arrow">&rarr;</span>` +
+      `<span class="node">${esc(s.vip)}:${esc(s.port)} ${s.transport.toUpperCase()}</span><span class="arrow">&rarr;</span>` +
+      `<span class="node">${mode}</span><span class="arrow">&rarr;</span>` +
+      `<span class="node">${nm} collector${nm === 1 ? "" : "s"}</span>`;
+
+    const lvlName = { req: "Required", rec: "Recommended", warn: "Watch out" };
+    $("recs").innerHTML = recs.map((r) =>
+      `<div class="advice lvl-${r.lvl}"><div class="rec-head"><span class="pill ${r.lvl}">${lvlName[r.lvl]}</span><h3>${esc(r.title)}</h3></div>` +
+      `<p>${r.body}</p><p class="why">${esc(r.why)}</p></div>`).join("");
+
+    $("cfg").innerHTML = buildConfig(s);
+    $("codeLabel").textContent = otlp ? "tmsh · pool and monitor" : "tmsh · starting point";
+    renderSymptoms(s);
+  }
+
+  function copyText(text, btn) {
+    const done = () => { const o = btn.textContent; btn.textContent = "Copied"; setTimeout(() => (btn.textContent = o), 1400); };
+    const fallback = (pre) => { const r = document.createRange(); r.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); btn.textContent = "Selected, press Ctrl+C"; };
+    try {
+      navigator.clipboard.writeText(text).then(done, () => fallback(btn.parentElement.querySelector("pre")));
+    } catch (e) { fallback(btn.parentElement.querySelector("pre")); }
+  }
+
+  // Default port follows transport unless the user typed their own
+  let portTouched = false;
+  $("port").addEventListener("input", () => { portTouched = true; });
+  function syncPort() {
+    if (portTouched) return;
+    const src = $("source").value;
+    const t = document.querySelector("input[name=transport]:checked").value;
+    $("port").value = src === "otlp" ? DEFAULT_PORT.otlp : DEFAULT_PORT[t];
+  }
+
+  $("form").addEventListener("input", (e) => { if (e.target.name === "transport" || e.target.id === "source") { render(); syncPort(); } render(); });
+  $("form").addEventListener("change", (e) => { if (e.target.name === "transport" || e.target.id === "source") syncPort(); render(); });
+  $("form").addEventListener("submit", (e) => e.preventDefault());
+  $("symptoms").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-id]"); if (!b) return;
+    activeSymptom = b.dataset.id; renderSymptoms(state());
+  });
+  $("ts").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-copy]"); if (!b) return;
+    copyText(b.parentElement.querySelector("pre").textContent, b);
+  });
+  $("copyCfg").addEventListener("click", (e) => copyText($("cfg").textContent, e.currentTarget));
+
+  render();
+})();
+</script>
+
+</body></html>
